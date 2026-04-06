@@ -3,13 +3,14 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-# --- 1. 全平台基礎設定 ---
+# --- 1. 全平台存取與操作優化 ---
 st.set_page_config(
     page_title="產險行動辦公室", 
     layout="wide", 
     initial_sidebar_state="expanded" 
 )
 
+# 目錄與檔案設定
 ATTACH_DIR = "attachments"
 DB_RENEW = "renew_db.csv"
 DB_PROG = "prog_db.csv"
@@ -17,16 +18,17 @@ DB_PROG = "prog_db.csv"
 if not os.path.exists(ATTACH_DIR):
     os.makedirs(ATTACH_DIR)
 
-# --- 2. 欄位定義 ---
+# --- 2. 資料結構與欄位精確定義 ---
 RENEW_FIELDS = ["投保險種", "被保險人", "被保險人ID", "要保人", "要保人ID", "電話", "出單日", "起保日", "到期日", "保費", "牌照號碼", "業務來源", "行員 ID", "行員姓名", "通訊地址", "收費地址", "標的物地址"]
 PROG_FIELDS = ["保險種類", "被保險人姓名", "給業代/客人繳費方式日", "起保日", "到期日", "保險費用", "是否繳費", "牌照號碼", "業務來源", "業務人員/產險證字號", "實際服務人員", "通路代號", "網銀匯款日期", "繳費方式", "交給核保日", "摺單日", "送單日", "新年度保單號碼", "被保險人通訊地址", "被保險人身份證字號/統一編號", "要保人姓名", "要保人身份證字號/統一編號", "公司負責人", "公司負責人身分證字號", "公司負責人出生年月日"]
 
-# --- 3. 資料處理工具 ---
+# --- 5. 穩定性要求：防錯機制 (解決 KeyError) ---
 def load_data(file_path, cols):
     if os.path.exists(file_path):
         try:
             df = pd.read_csv(file_path).fillna("")
-            df.columns = [c.strip() for c in df.columns] 
+            # 清洗標題空格，防止 KeyError
+            df.columns = [str(c).strip() for c in df.columns] 
             for c in cols:
                 if c not in df.columns: df[c] = ""
             return df[cols]
@@ -41,7 +43,7 @@ if "renew_db" not in st.session_state: st.session_state.renew_db = load_data(DB_
 if "prog_db" not in st.session_state: st.session_state.prog_db = load_data(DB_PROG, PROG_FIELDS)
 if "auth" not in st.session_state: st.session_state.auth = False
 
-# --- 4. 登入防護 ---
+# --- 4. 安全性：密碼登入機制 ---
 if not st.session_state.auth:
     st.title("🔐 產險管理系統")
     with st.form("login_form"):
@@ -53,14 +55,13 @@ if not st.session_state.auth:
             else: st.error("密碼錯誤")
     st.stop()
 
-# --- 5. 核心智慧提醒 (邏輯精確版) ---
+# --- 1. 核心智慧提醒邏輯 (含假日提前與自動勾稽) ---
 def get_reminders():
     today = datetime.now().date()
     
-    # A. 案子進度表：到期日提醒 (含假日提前邏輯)
+    # A. 進度表到期偵測 (含假日提前處理)
     target_dates = [today]
-    if today.weekday() == 4: # 如果今天是週五
-        # 自動提前抓出週六與週日的件
+    if today.weekday() == 4: # 週五時，自動加入週六與週日案件
         target_dates.append(today + timedelta(days=1))
         target_dates.append(today + timedelta(days=2))
 
@@ -68,12 +69,12 @@ def get_reminders():
     p_df['到期日_dt'] = pd.to_datetime(p_df['到期日'], errors='coerce').dt.date
     p_urgent = p_df[p_df['到期日_dt'].isin(target_dates)]
 
-    # B. 續保清單表：2個月預警 + 自動勾稽停止邏輯
+    # B. 續保預警 (2個月內) 與 自動勾稽停止邏輯
     r_df = st.session_state.renew_db.copy()
     r_df['到期日_dt'] = pd.to_datetime(r_df['到期日'], errors='coerce').dt.date
     two_months_limit = today + timedelta(days=60)
     
-    # 建立進度表已有的「車牌」與「身分證」清單，用於自動勾稽
+    # 建立勾稽比對清單 (進度表中的身分證與車牌)
     proc_ids = set(st.session_state.prog_db['被保險人身份證字號/統一編號'].astype(str))
     proc_plates = set(st.session_state.prog_db['牌照號碼'].astype(str))
 
@@ -84,9 +85,8 @@ def get_reminders():
     ]
     return p_urgent, r_remind
 
-# --- 6. 自動化歸檔與附件管理 ---
-def display_files(plate, uid, prefix, index):
-    # 智慧配對：比對車牌或身分證字號
+# --- 3. 自動化歸檔與附件管理 ---
+def display_attachments(plate, uid, prefix, index):
     m_keys = [str(plate).strip(), str(uid).strip()]
     m_keys = [k for k in m_keys if k and k != "nan" and k != ""]
     
@@ -96,5 +96,14 @@ def display_files(plate, uid, prefix, index):
                 fpath = os.path.join(ATTACH_DIR, fn)
                 ext = fn.lower().split('.')[-1]
                 
-                # 多元格式支援：圖片預覽
+                # 圖片預覽
                 if ext in ['png', 'jpg', 'jpeg']:
+                    st.image(fpath, caption=f"附件: {fn}", use_container_width=True)
+                # PDF 下載按鈕
+                elif ext == 'pdf':
+                    with open(fpath, "rb") as f:
+                        st.download_button(
+                            label=f"📥 下載 PDF: {fn}",
+                            data=f,
+                            file_name=fn,
+                            key=f"dl_{prefix
