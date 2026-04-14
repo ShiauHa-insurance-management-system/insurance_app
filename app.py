@@ -7,15 +7,14 @@ from datetime import datetime, timedelta
 st.set_page_config(
     page_title="產險行動辦公室", 
     layout="wide", 
-    initial_sidebar_state="collapsed" # 手機版建議先收起，騰出空間
+    initial_sidebar_state="collapsed" 
 )
 
 # 手機端 UI 優化
 st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 5px; height: 3.5em; margin-bottom: 10px; }
-    .stDownloadButton>button { width: 100%; border-radius: 5px; height: 3.5em; }
-    /* 刪除按鈕特別標色 */
+    .stDownloadButton>button { width: 100%; border-radius: 5px; height: 3.5em; background-color: #f0f2f6; color: #31333F; border: 1px solid #dcdde1; }
     div[data-testid="stForm"] button[kind="secondary"] { color: white; background-color: #ff4b4b; }
     </style>
     """, unsafe_allow_html=True)
@@ -69,18 +68,14 @@ def get_reminders():
     today = datetime.now().date()
     target_dates = [today]
     if today.weekday() == 4: target_dates.extend([today + timedelta(days=1), today + timedelta(days=2)])
-
     p_df = st.session_state.prog_db.copy()
     p_df['到期日_dt'] = pd.to_datetime(p_df['到期日'], errors='coerce').dt.date
     p_urgent = p_df[p_df['到期日_dt'].isin(target_dates)]
-
     r_df = st.session_state.renew_db.copy()
     r_df['到期日_dt'] = pd.to_datetime(r_df['到期日'], errors='coerce').dt.date
     limit = today + timedelta(days=60)
-    
     proc_ids = set(st.session_state.prog_db['被保險人身份證字號/統一編號'].astype(str))
     proc_plates = set(st.session_state.prog_db['牌照號碼'].astype(str))
-
     r_remind = r_df[
         (r_df['到期日_dt'] <= limit) & (r_df['到期日_dt'] >= today) &
         (~r_df['被保險人ID'].astype(str).isin(proc_ids)) &
@@ -145,54 +140,39 @@ def render_list(db_key, name_k, plate_k, id_k, fields, prefix, db_file):
     df = st.session_state[db_key]
     q = st.text_input(f"🔎 搜尋姓名/車牌/ID", key=f"s_{prefix}", placeholder="快速關鍵字搜尋...")
     rdf = df[df.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)] if q else df
-    
     for i, row in rdf.iterrows():
         with st.expander(f"👤 {row.get(name_k)} | 🚗 {row.get(plate_k)}"):
-            # A. 顯示模式
             st.markdown("**📋 詳細資料**")
             for f in fields:
                 if row.get(f): st.write(f"**{f}:** {row.get(f)}")
-            
             st.divider()
             display_attachments(row.get(plate_k), row.get(id_k), prefix, i)
             st.divider()
-
-            # B. 編輯與刪除按鈕 (並排)
-            c1, c2 = st.columns(2)
             edit_mode = st.toggle("📝 啟動編輯/刪除模式", key=f"edit_toggle_{prefix}_{i}")
-            
             if edit_mode:
                 with st.form(f"form_{prefix}_{i}"):
                     st.subheader("🛠️ 修改資料內容")
                     updated_data = {}
                     for f in fields:
-                        # 簡單判斷日期格式
                         if "日" in f:
-                            try:
-                                curr_date = pd.to_datetime(row.get(f)).date()
-                            except:
-                                curr_date = datetime.now().date()
+                            try: curr_date = pd.to_datetime(row.get(f)).date()
+                            except: curr_date = datetime.now().date()
                             updated_data[f] = str(st.date_input(f"修改 {f}", value=curr_date))
-                        else:
-                            updated_data[f] = st.text_input(f"修改 {f}", value=str(row.get(f)))
-                    
+                        else: updated_data[f] = st.text_input(f"修改 {f}", value=str(row.get(f)))
                     st.divider()
                     st.subheader("🗑️ 危險區域")
                     confirm_del = st.checkbox("我確認要刪除此筆資料", key=f"del_check_{prefix}_{i}")
-                    
                     col_save, col_del = st.columns(2)
                     if col_save.form_submit_button("💾 儲存修改", use_container_width=True):
                         st.session_state[db_key].loc[i] = updated_data
                         save_data(st.session_state[db_key], db_file)
                         st.success("修改成功！"); st.rerun()
-                    
                     if col_del.form_submit_button("🔥 執行刪除", use_container_width=True):
                         if confirm_del:
                             st.session_state[db_key] = st.session_state[db_key].drop(i).reset_index(drop=True)
                             save_data(st.session_state[db_key], db_file)
                             st.warning("資料已刪除"); st.rerun()
-                        else:
-                            st.error("請先勾選確認刪除方塊")
+                        else: st.error("請先勾選確認刪除方塊")
 
 with t_ren:
     render_list("renew_db", "被保險人", "牌照號碼", "被保險人ID", RENEW_FIELDS, "ren", DB_RENEW)
@@ -200,7 +180,32 @@ with t_ren:
 with t_pro:
     render_list("prog_db", "被保險人姓名", "牌照號碼", "被保險人身份證字號/統一編號", PROG_FIELDS, "prog", DB_PROG)
 
+# --- 管理分頁：新增資料下載功能 ---
 with t_man:
+    st.subheader("📥 資料備份下載")
+    c1, c2 = st.columns(2)
+    
+    # 下載續保明細
+    if os.path.exists(DB_RENEW):
+        with open(DB_RENEW, "rb") as f:
+            c1.download_button(
+                label="📋 下載續保明細 (CSV)",
+                data=f,
+                file_name=f"renew_backup_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+    
+    # 下載出單進度
+    if os.path.exists(DB_PROG):
+        with open(DB_PROG, "rb") as f:
+            c2.download_button(
+                label="📑 下載出單進度 (CSV)",
+                data=f,
+                file_name=f"prog_backup_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+    
+    st.divider()
     if st.button("🔓 安全登出系統", type="primary", use_container_width=True):
         st.session_state.auth = False
         st.rerun()
