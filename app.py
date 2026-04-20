@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import zipfile
+import io
 from datetime import datetime, timedelta
 
 # --- 1. 全平台操作優化 ---
@@ -180,33 +182,33 @@ with t_ren:
 with t_pro:
     render_list("prog_db", "被保險人姓名", "牌照號碼", "被保險人身份證字號/統一編號", PROG_FIELDS, "prog", DB_PROG)
 
-# --- 管理分頁：新增資料下載功能 ---
+# --- 管理分頁：新增 ZIP 備份下載功能 ---
 with t_man:
     st.subheader("📥 資料備份下載")
     c1, c2 = st.columns(2)
     
-    # 下載續保明細
+    # 原有 CSV 下載
     if os.path.exists(DB_RENEW):
         with open(DB_RENEW, "rb") as f:
-            c1.download_button(
-                label="📋 下載續保明細 (CSV)",
-                data=f,
-                file_name=f"renew_backup_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-    
-    # 下載出單進度
+            c1.download_button(label="📋 下載續保明細 (CSV)", data=f, file_name=f"renew_backup_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
     if os.path.exists(DB_PROG):
         with open(DB_PROG, "rb") as f:
-            c2.download_button(
-                label="📑 下載出單進度 (CSV)",
-                data=f,
-                file_name=f"prog_backup_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
+            c2.download_button(label="📑 下載出單進度 (CSV)", data=f, file_name=f"prog_backup_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
     
     st.divider()
-    if st.button("🔓 安全登出系統", type="primary", use_container_width=True):
+    # 新增 ZIP 打包備份
+    if st.button("📥 下載完整系統備份 (CSV明細 + 附件 ZIP)", type="primary", use_container_width=True):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            if os.path.exists(DB_RENEW): zf.write(DB_RENEW)
+            if os.path.exists(DB_PROG): zf.write(DB_PROG)
+            for root, dirs, files in os.walk(ATTACH_DIR):
+                for file in files:
+                    zf.write(os.path.join(root, file))
+        st.download_button(label="點擊下載完整壓縮包", data=zip_buffer.getvalue(), file_name=f"full_backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
+    
+    st.divider()
+    if st.button("🔓 安全登出系統", type="secondary", use_container_width=True):
         st.session_state.auth = False
         st.rerun()
     st.divider()
